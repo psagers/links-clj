@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+declare -a pids
+
+echo '*** Press any key to stop ***'
+
+bin/brunch watch &
+pids+=($!)
+
+bin/shadow-cljs watch browser &
+pids+=($!)
+
+read ignored
+
+for p in $pids; do
+    kill $p
+done

@@ -1,0 +1,13 @@
+{:source-paths ["src/shared", "src/client"]
+
+ :dependencies [[com.cognitect/transit-cljs "0.8.256"]
+                [day8.re-frame/re-frame-10x "0.4.5"]
+                [re-frame "0.11.0-rc3"]]
+
+ :builds {:browser {:target :browser
+                    :output-dir "static"
+                    :asset-path "/static"
+                    :compiler-options {:infer-externs :auto}
+                    :build-options {:manifest-name "../src/server/resources/modules.edn"}
+                    :module-hash-names true
+                    :modules {:links {:init-fn net.ignorare.links/init}}}}}

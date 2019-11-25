@@ -1,0 +1,6 @@
+/.cpcache/
+/.lein-repl-history
+/.shadow-cljs/
+/build/
+/node_modules/
+/static/
