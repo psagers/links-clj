@@ -1,6 +1,13 @@
-/.cpcache/
-/.lein-repl-history
-/.shadow-cljs/
-/build/
+# Clojure(Script) dev artifacts
+.clj-kondo/
+.cpcache/
+.lein-repl-history
+.nrepl-port
+.shadow-cljs/
+cljs-runtime/
+
+# npm
 /node_modules/
-/static/
+
+# Dev content
+/.crux-data/

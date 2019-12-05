@@ -1,0 +1,5 @@
+{:linters
+ {:unresolved-symbol
+  {:exclude [(better-cond.core/cond)]}}
+
+ :lint-as {reagent.core/with-let clojure.core/let}}

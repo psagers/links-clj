@@ -3,7 +3,7 @@ const autoprefixer = require('autoprefixer');
 
 module.exports = {
   paths: {
-    public: 'static'
+    public: 'resources/public'
   },
 
   files: {
@@ -22,11 +22,10 @@ module.exports = {
     },
 
     fingerprint: {
-      manifest: 'src/server/resources/manifest.json',
+      manifest: 'resources/links/manifest.json',
       autoClearOldFiles: true,
-      // srcBasePath: 'static/',
-      // destBasePath: 'static/',
-      // publicRootPath: '/static'
+      srcBasePath: 'resources/public/',
+      destBasePath: 'resources/public/',
     }
   }
 }

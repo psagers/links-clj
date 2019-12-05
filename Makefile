@@ -4,7 +4,11 @@
 release: clean brunch shadow-cljs uberjar
 
 clean:
-	-rm -r static
+	-rm -r resources/links/manifest.json \
+         resources/links/modules.edn \
+         resources/public/links*.css \
+         resources/public/links*.css.map \
+         resources/public/links*.js
 
 brunch:
 	bin/brunch build --production

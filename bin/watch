@@ -1,17 +1,13 @@
 #!/usr/bin/env bash
 
+
 declare -a pids
 
-echo '*** Press any key to stop ***'
+echo '*** Press Ctrl-C to stop ***'
 
 bin/brunch watch &
 pids+=($!)
 
-bin/shadow-cljs watch browser &
-pids+=($!)
+bin/shadow-cljs watch browser
 
-read ignored
-
-for p in $pids; do
-    kill $p
-done
+kill ${pids[@]}
