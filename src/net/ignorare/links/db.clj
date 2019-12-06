@@ -1,54 +1,67 @@
 (ns net.ignorare.links.db
-  (:require [crux.api :as crux]
-            [integrant.core :as ig]))
+  (:require [clojure.core.async :as async :refer [<! >! go-loop]]
+            [crux.api :as crux]
+            [integrant.core :as ig]
+            [taoensso.timbre :as log]))
 
 
 ;; Starts Crux and returns the ICruxNode.
-(defmethod ig/init-key :db/crux [_ {:keys [_config]}]
-  (crux/start-node {:crux.node/topology :crux.jdbc/topology
-                    :crux.jdbc/dbtype "postgresql"
-                    :crux.jdbc/dbname "links"
-                    :crux.jdbc/user "postgres"
-                    :crux.kv/db-dir ".crux-data"}))
+(defmethod ig/init-key :db/crux [_ {:keys [config]}]
+  (crux/start-node (:crux config)))
 
 (defmethod ig/halt-key! :db/crux [_ node]
   (when (some? node)
     (.close node)))
 
 
-;; Creates an agent to process transactions on our Crux node.
+(defn ^:private transactor
+  "Runs the Crux transactor as a core.async thread.
+
+  node: An ICruxNode.
+
+  tx-chan: A core.async channel, which effectively pipes to crux.api/submit-tx.
+  It expects values of the form [tx-fn, result-chan]. tx-fn is a function that
+  takes an ICruxDatasource and returns a vector of zero or more transaction
+  operations (the second argument to crux.api/submit-tx). result-chan is a
+  promise-chan that will receive the transaction details."
+  [node tx-chan]
+  (go-loop []
+    (when-some [[tx-fn result-chan] (<! tx-chan)]
+      (try
+        (let [tx-ops (tx-fn (crux/db node))
+              tx-info (crux/submit-tx node tx-ops)]
+          (when (some? tx-info)
+            (>! result-chan tx-info)))
+        (catch Exception e
+          (log/error e)))
+
+      ;; Always make sure result-chan is closed, whether or not we put a result
+      ;; on it.
+      (async/close! result-chan)
+
+      (recur))))
+
 (defmethod ig/init-key :db/transactor [_ {:keys [node]}]
-  (agent {:node node}, :error-mode :continue))
+  (let [tx-chan (async/chan)
+        transactor-chan (transactor node tx-chan)]
+    {:tx-chan tx-chan, :transactor-chan transactor-chan}))
 
-(defmethod ig/halt-key! :db/transactor [_ transactor]
-  (send transactor #(assoc % :node nil))
-  (await transactor))
+;; Stop accepting transactions and give the transactor a second to terminate.
+(defmethod ig/halt-key! :db/transactor [_ {:keys [tx-chan transactor-chan]}]
+  (async/close! tx-chan)
+  (async/alts!! [transactor-chan (async/timeout 1000)]))
 
-
-(defn ^:private transact-inner
-  "The function that runs inside the transactor agent."
-  [{:keys [node] :as state} tx-fn cb-fn]
-  (let [tx-info (when node
-                  (when-some [tx-ops (try (tx-fn (crux/db node)) (catch Exception _))]
-                    (crux/submit-tx node tx-ops)))]
-    (when cb-fn
-      (future (cb-fn tx-info))))
-
-  state)
 
 (defn transact!
   "Applies a transaction function to our Crux node.
 
-  tx-fun is a function that takes an ICruxDatasource and returns a vector of
-  zero or more transaction operations (the second argument to
-  crux.api/submit-tx).
+  tx-fn is a function that takes an ICruxDatasource and returns a vector of
+  transaction operations (the second argument to crux.api/submit-tx).
 
-  The optional cb-fn is a callback to receive details (on another thread) of the
-  submitted Crux transaction, if any.
-  "
-  ([transactor tx-fn]
-   (transact! transactor tx-fn nil))
-
-  ([transactor tx-fn cb-fn]
-   (send transactor transact-inner tx-fn cb-fn)
-   nil))
+  Returns a promise-chan that will convey the result of crux.api/submit-tx, if
+  any. If tx-fn throws an exception, it will be ignored and no transaction will
+  be submitted."
+  [{:keys [tx-chan]} tx-fn]
+  (let [result-chan (async/promise-chan)]
+    (async/put! tx-chan [tx-fn result-chan])
+    result-chan))

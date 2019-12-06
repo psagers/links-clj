@@ -1,0 +1,7 @@
+{:sys/config {}
+ :sys/logging {:config #ig/ref :sys/config}
+ :db/crux {:config #ig/ref :sys/config
+           :logging #ig/ref :sys/logging}
+ :db/transactor {:node #ig/ref :db/crux}
+ :http/sente {:transactor #ig/ref :db/transactor}
+ :http/server {:sente #ig/ref :http/sente}}

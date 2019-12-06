@@ -17,4 +17,4 @@ shadow-cljs:
 	bin/shadow-cljs release browser
 
 uberjar:
-	lein uberjar
+	false
