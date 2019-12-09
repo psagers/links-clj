@@ -1,0 +1,4 @@
+#!/bin/sh
+
+
+exec /usr/bin/env TIMBRE_LEVEL=warn clojure -A:outdated

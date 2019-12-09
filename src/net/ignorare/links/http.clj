@@ -5,8 +5,9 @@
             [clojure.java.io :as io]
             [hiccup.page :refer [html5]]
             [integrant.core :as ig]
+            [net.ignorare.links.http.auth :as auth]
             [org.httpkit.server :as http-kit]
-            [ring.middleware.defaults :as defaults]
+            [ring.middleware.defaults :refer [wrap-defaults site-defaults]]
             [ring.util.response :as res]
             [taoensso.sente :as sente]
             [taoensso.sente.server-adapters.http-kit :refer (get-sch-adapter)]
@@ -20,6 +21,7 @@
 (defn- log-connections [_key _connected_uids old-state new-state]
   (when (not= old-state new-state)
     (spy :info "connected-uids" new-state)))
+
 
 (defmethod ig/init-key :http/sente [_ _]
   (let [sente (sente/make-channel-socket! (get-sch-adapter) {})]
@@ -82,19 +84,21 @@
       (res/status 405))))
 
 
-(defn- routes [sente]
+(defn- routes [crux sente]
   ["/" {"" index-handler
+        "auth" {"" (auth/auth-handler crux)}
         "chsk" (chsk-handler sente)
         "static/" (bidi.ring/resources {:prefix "public/"})}])
 
 
-(defn- app [sente]
-  (let [handler (bidi.ring/make-handler (routes sente))]
-    (defaults/wrap-defaults handler defaults/site-defaults)))
+(defn- app [crux sente]
+  (-> (bidi.ring/make-handler (routes crux sente))
+      (wrap-defaults site-defaults)))
 
 
-(defmethod ig/init-key :http/server [_ {:keys [sente]}]
-  (let [stop-fn (http-kit/run-server (app sente) {:port 8000})]
+(defmethod ig/init-key :http/server [_ {:keys [config crux sente]}]
+  (let [stop-fn (http-kit/run-server (app crux sente)
+                                     {:port (-> config :http :port)})]
     {:stop-fn stop-fn}))
 
 (defmethod ig/halt-key! :http/server [_ {:keys [stop-fn]}]

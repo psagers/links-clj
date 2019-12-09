@@ -5,8 +5,9 @@
             [taoensso.timbre :as timbre]))
 
 
-(defmethod ig/init-key :sys/config [_ _]
-  (aero/read-config (io/resource "links/config.edn")))
+(defmethod ig/init-key :sys/config [_ aero-opts]
+  (let [url (io/resource "links/config.edn")]
+    (aero/read-config url aero-opts)))
 
 
 (defmethod ig/init-key :sys/logging [_ {:keys [config]}]

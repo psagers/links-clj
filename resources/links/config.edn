@@ -1,6 +1,17 @@
-{:timbre {:level :info}
- :crux {:crux.node/topology :crux.jdbc/topology
-        :crux.jdbc/dbtype "postgresql"
-        :crux.jdbc/dbname "links"
-        :crux.jdbc/user "postgres"
-        :crux.kv/db-dir ".crux-data"}}
+{:timbre {:level #profile {:default :info
+                           :test :warn}}
+ :crux #profile {:dev {:crux.node/topology :crux.jdbc/topology
+                       :crux.node/kv-store :crux.kv.lmdb/kv
+                       :crux.kv/db-dir ".crux-data"
+                       :crux.jdbc/dbtype "postgresql"
+                       :crux.jdbc/dbname "links"
+                       :crux.jdbc/user "postgres"}
+                 :test {:crux.node/topology :crux.standalone/topology
+                        :crux.node/kv-store :crux.kv.memdb/kv
+                        :crux.kv/db-dir ".crux-test/data"
+                        :crux.standalone/event-log-dir ".crux-test/log"
+                        :crux.standalone/event-log-kv-store :crux.kv.memdb/kv}}
+ :http {:port #profile {:default 8000
+                        :test 8101}}
+ :webauthn {:rpid #profile {:default "links.ignorare.net"
+                            :dev "localhost:8000"}}}
