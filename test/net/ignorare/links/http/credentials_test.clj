@@ -26,6 +26,7 @@
         cred-4-id #uuid "2cd7cb9d-8e93-43de-be9a-2fda3f4cab01"
         cred-5-id #uuid "6a30c8a2-e326-4a38-871e-12082a0134ca"
         cred-6-id #uuid "7177a125-dbfe-4af9-a07f-6f79b2c8fdba"]
+
     [{:crux.db/id alice-uuid
       :links.user/email "alice@example.com"
       :links.user/credentials #{cred-1-id cred-2-id}}

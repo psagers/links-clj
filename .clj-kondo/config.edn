@@ -1,5 +1,6 @@
 {:linters
  {:unresolved-symbol
-  {:exclude [(better-cond.core/cond)]}}
+  {:exclude [(better-cond.core/cond)
+             (meander.epsilon/match)]}}
 
  :lint-as {reagent.core/with-let clojure.core/let}}

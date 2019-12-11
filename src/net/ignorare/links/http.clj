@@ -8,10 +8,11 @@
             [net.ignorare.links.http.auth :as auth]
             [org.httpkit.server :as http-kit]
             [ring.middleware.defaults :refer [wrap-defaults site-defaults]]
+            [ring.middleware.format :refer [wrap-restful-format]]
             [ring.util.response :as res]
             [taoensso.sente :as sente]
             [taoensso.sente.server-adapters.http-kit :refer (get-sch-adapter)]
-            [taoensso.timbre :refer [spy]]))
+            [taoensso.timbre :as log :refer [spy]]))
 
 
 ;;
@@ -66,7 +67,8 @@
           [:title "Links"]
           [:link {:rel "stylesheet", :href (str "/static/" (css-name))}]
           [:script {:defer true, :src (str "/static/" (js-name))}]]
-         [:body {:data-csrf-token (:anti-forgery-token req)}]))
+         [:body {:data-csrf-token (:anti-forgery-token req)}
+          [:section#links.section]]))
 
 (defn- index-handler
   [req]
@@ -84,20 +86,21 @@
       (res/status 405))))
 
 
-(defn- routes [crux sente]
+(defn- routes [crux webauthn sente]
   ["/" {"" index-handler
-        "auth" {"" (auth/auth-handler crux)}
+        "auth" {"" (-> (auth/get-auth-handler crux webauthn)
+                       (wrap-restful-format))}
         "chsk" (chsk-handler sente)
         "static/" (bidi.ring/resources {:prefix "public/"})}])
 
 
-(defn- app [crux sente]
-  (-> (bidi.ring/make-handler (routes crux sente))
+(defn- app [crux webauthn sente]
+  (-> (bidi.ring/make-handler (routes crux webauthn sente))
       (wrap-defaults site-defaults)))
 
 
-(defmethod ig/init-key :http/server [_ {:keys [config crux sente]}]
-  (let [stop-fn (http-kit/run-server (app crux sente)
+(defmethod ig/init-key :http/server [_ {:keys [config crux webauthn sente]}]
+  (let [stop-fn (http-kit/run-server (app crux webauthn sente)
                                      {:port (-> config :http :port)})]
     {:stop-fn stop-fn}))
 

@@ -27,6 +27,7 @@
         http-kit {:mvn/version "2.3.0"}
         ring/ring-core {:mvn/version "1.8.0"}
         ring/ring-defaults {:mvn/version "0.3.2"}
+        ring-middleware-format {:mvn/version "0.7.4"}
         bidi {:mvn/version "2.1.6"}
         com.taoensso/sente {:mvn/version "1.15.0"}
         hiccup {:mvn/version "1.0.5"}

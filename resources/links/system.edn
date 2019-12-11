@@ -8,5 +8,6 @@
                  :crux #ig/ref :db/crux}
  :http/sente {:crux #ig/ref :db/crux}
  :http/server {:config #ig/ref :sys/config
+               :crux #ig/ref :db/crux
                :webauthn #ig/ref :http/webauthn
                :sente #ig/ref :http/sente}}

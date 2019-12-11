@@ -33,16 +33,21 @@
   (:http/server system))
 
 
+(defn db []
+  (-> (crux) :node crux/db))
+
 (defn q [query]
   (crux/q (-> (crux) :node crux/db) query))
 
 
 (comment
   (-> (db/transact! (crux)
-                    (constantly [[:crux.tx/put {:crux.db/id (UUID/randomUUID)
+                    (constantly [[:crux.tx/put {:crux.db/id #uuid "78c7f19e-2d2e-4959-951b-2f6bd8cc2690"
                                                 :links.user/email "psagers@ignorare.net"
                                                 :links.user/name "Peter Sagerson"}]]))
       (<!!))
+
+  (crux/entity (db) (:crux.db/id user))
 
   (q '{:find [uid email name]
        :where [[uid :links.user/email email]
