@@ -1,9 +1,10 @@
 (ns net.ignorare.links
   (:require [clojure.java.io :as io]
             [integrant.core :as ig]
-            [net.ignorare.links.db :as db]
-            [net.ignorare.links.http :as http]
-            [net.ignorare.links.sys :as sys])
+            [net.ignorare.links.db]
+            [net.ignorare.links.http]
+            [net.ignorare.links.sys]
+            [net.ignorare.links.webauthn])
   (:gen-class))
 
 

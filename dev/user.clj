@@ -1,11 +1,12 @@
 (ns user
-  (:require [crux.api :as crux]
-            [clojure.core.async :as async :refer [<!!]]
+  (:require [clojure.core.async :as async :refer [<!!]]
+            [crux.api :as crux]
             [integrant.repl :refer [clear go halt prep init reset reset-all]]
             [integrant.repl.state :refer [system]]
             [net.ignorare.links]
             [net.ignorare.links.db :as db]
             [net.ignorare.links.http :as http]
+            [net.ignorare.links.models.users :as users]
             [net.ignorare.links.sys :as sys])
   (:import java.util.UUID))
 
@@ -47,7 +48,18 @@
                                                 :links.user/name "Peter Sagerson"}]]))
       (<!!))
 
+
+  (def user-id #uuid "78c7f19e-2d2e-4959-951b-2f6bd8cc2690")
+  (def user (crux/entity (db) user-id))
+
   (crux/entity (db) (:crux.db/id user))
+
+  (-> (db/transact! (crux) (partial users/tx-remove-all-credentials user-id))
+      <!!)
+
+  (q {:find '[c]
+      :where '[[c :links.credential/mechanism m]]
+      :args [{'m #{:webauthn}}]})
 
   (q '{:find [uid email name]
        :where [[uid :links.user/email email]

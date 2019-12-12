@@ -12,5 +12,5 @@
                     :asset-path "/static"
                     :compiler-options {:infer-externs :auto}
                     :build-options {:manifest-name "../links/modules.edn"}
-                    :module-hash-names true
+                    ;; :module-hash-names true
                     :modules {:links {:init-fn net.ignorare.links/init}}}}}

@@ -1,8 +1,10 @@
 (ns net.ignorare.links.http.credentials-test
-  "Tests for net.ignorare.links.http.auth/CruxCredentials"
+  "Tests for net.ignorare.links.http.webauthn/CruxCredentials"
   (:require [clojure.test :refer [use-fixtures deftest is compose-fixtures]]
             [crux.api :as crux]
-            [net.ignorare.links.http.auth :as auth]
+            [net.ignorare.links.db :as db]
+            [net.ignorare.links.webauthn :as webauthn]
+            [net.ignorare.links.models.users :as users]
             [net.ignorare.links.test :refer [ig-fixture *system*]])
   (:import (com.yubico.webauthn.data ByteArray)
            (java.util UUID Optional)))
@@ -44,21 +46,20 @@
       :links.credential.webauthn/id (.getBase64Url webauthn-1-id)
       :links.credential.webauthn/public-key (.getBase64Url fake-public-key)}
 
-     {:crux.db/id cred-2-id
-      :links.credential/mechanism :other}
+     {:crux.db/id cred-2-id}
 
      {:crux.db/id cred-3-id
       :links.credential/mechanism :webauthn
       :links.credential.webauthn/id (.getBase64Url webauthn-3-id)
-      :links.credential.webauthn/public-key (.getBase64Url fake-public-key)}
+      :links.credential.webauthn/public-key (.getBase64Url fake-public-key)
+      :links.credential.webauthn/signature-count 10}
 
      {:crux.db/id cred-4-id
       :links.credential/mechanism :webauthn
       :links.credential.webauthn/id (.getBase64Url webauthn-4-id)
       :links.credential.webauthn/public-key (.getBase64Url fake-public-key)}
 
-     {:crux.db/id cred-5-id
-      :links.credential/mechanism :other}
+     {:crux.db/id cred-5-id}
 
      {:crux.db/id cred-6-id
       :links.credential/mechanism :webauthn
@@ -85,58 +86,62 @@
                                       with-data))
 
 
+(defn registered-credential
+  [user-id ^ByteArray webauthn-id]
+  (let [db (:db/crux *system*)]
+    (when-some [credential-id (users/webauthn-credential-id-for-user db user-id (.getBase64Url webauthn-id))]
+      (webauthn/registered-credential user-id (db/entity db credential-id)))))
+
+
 (deftest get-credential-ids-for-username
-  (let [credentials (auth/->CruxCredentials (-> *system* :db/crux :node))]
-    (is (= #{(auth/public-key-credential-descriptor webauthn-1-id)}
+  (let [credentials (webauthn/->CruxCredentials (-> *system* :db/crux :node))]
+    (is (= #{(webauthn/public-key-credential-descriptor webauthn-1-id)}
            (.getCredentialIdsForUsername credentials "alice@example.com")))
-    (is (= #{(auth/public-key-credential-descriptor webauthn-3-id)
-             (auth/public-key-credential-descriptor webauthn-4-id)}
+    (is (= #{(webauthn/public-key-credential-descriptor webauthn-3-id)
+             (webauthn/public-key-credential-descriptor webauthn-4-id)}
            (.getCredentialIdsForUsername credentials "bob@example.com")))
-    (is (= #{(auth/public-key-credential-descriptor webauthn-3-id)}
+    (is (= #{(webauthn/public-key-credential-descriptor webauthn-3-id)}
            (.getCredentialIdsForUsername credentials "carol@example.com")))))
 
 
 (deftest get-user-handle-for-username
-  (let [credentials (auth/->CruxCredentials (-> *system* :db/crux :node))]
-    (is (= (Optional/of (auth/uuid->ByteArray alice-uuid))
+  (let [credentials (webauthn/->CruxCredentials (-> *system* :db/crux :node))]
+    (is (= (Optional/of (webauthn/uuid->ByteArray alice-uuid))
            (.getUserHandleForUsername credentials "alice@example.com")))
-    (is (= (Optional/of (auth/uuid->ByteArray bob-uuid))
+    (is (= (Optional/of (webauthn/uuid->ByteArray bob-uuid))
            (.getUserHandleForUsername credentials "bob@example.com")))
     (is (= (Optional/empty)
            (.getUserHandleForUsername credentials "bogus@example.com")))))
 
 
 (deftest get-username-for-user-handle
-  (let [credentials (auth/->CruxCredentials (-> *system* :db/crux :node))]
+  (let [credentials (webauthn/->CruxCredentials (-> *system* :db/crux :node))]
     (is (= (Optional/of "alice@example.com")
-           (.getUsernameForUserHandle credentials (auth/uuid->ByteArray alice-uuid))))
+           (.getUsernameForUserHandle credentials (webauthn/uuid->ByteArray alice-uuid))))
     (is (= (Optional/of "bob@example.com")
-           (.getUsernameForUserHandle credentials (auth/uuid->ByteArray bob-uuid))))
+           (.getUsernameForUserHandle credentials (webauthn/uuid->ByteArray bob-uuid))))
     (is (= (Optional/empty)
-           (.getUsernameForUserHandle credentials (auth/uuid->ByteArray (UUID/randomUUID)))))))
+           (.getUsernameForUserHandle credentials (webauthn/uuid->ByteArray (UUID/randomUUID)))))))
 
 
 (deftest lookup-credential
-  (let [credentials (auth/->CruxCredentials (-> *system* :db/crux :node))
-        alice-id (auth/uuid->ByteArray alice-uuid)
-        bob-id (auth/uuid->ByteArray bob-uuid)]
-    (is (= (Optional/of (auth/registered-credential webauthn-1-id alice-id fake-public-key))
+  (let [credentials (webauthn/->CruxCredentials (-> *system* :db/crux :node))
+        alice-id (webauthn/uuid->ByteArray alice-uuid)
+        bob-id (webauthn/uuid->ByteArray bob-uuid)]
+    (is (= (Optional/of (registered-credential alice-uuid webauthn-1-id))
            (.lookup credentials webauthn-1-id alice-id)))
-    (is (= (Optional/of (auth/registered-credential webauthn-3-id bob-id fake-public-key))
+    (is (= (Optional/of (registered-credential bob-uuid webauthn-3-id))
            (.lookup credentials webauthn-3-id bob-id)))
     (is (= (Optional/empty)
            (.lookup credentials webauthn-1-id bob-id)))))
 
 
 (deftest lookup-all-credentials
-  (let [credentials (auth/->CruxCredentials (-> *system* :db/crux :node))
-        alice-id (auth/uuid->ByteArray alice-uuid)
-        bob-id (auth/uuid->ByteArray bob-uuid)
-        carol-id (auth/uuid->ByteArray carol-uuid)]
-    (is (= #{(auth/registered-credential webauthn-1-id alice-id fake-public-key)}
+  (let [credentials (webauthn/->CruxCredentials (-> *system* :db/crux :node))]
+    (is (= #{(registered-credential alice-uuid webauthn-1-id)}
            (.lookupAll credentials webauthn-1-id)))
-    (is (= #{(auth/registered-credential webauthn-3-id bob-id fake-public-key)
-             (auth/registered-credential webauthn-3-id carol-id fake-public-key)}
+    (is (= #{(registered-credential bob-uuid webauthn-3-id)
+             (registered-credential carol-uuid webauthn-3-id)}
            (.lookupAll credentials webauthn-3-id)))
     (is (= #{}
            (.lookupAll credentials (ByteArray. (.getBytes "bogus-credential-id")))))))

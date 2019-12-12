@@ -21,25 +21,24 @@
   much as possible. Some values need to be decoded from Base64Url to binary
   buffers."
   [options]
-  (->> options
-       (multi-transform [:publicKey (multi-path [:user :id (terminal b64/toBuffer)]
-                                                [:challenge (terminal b64/toBuffer)]
-                                                [:excludeCredentials ALL :id (terminal b64/toBuffer)])])
-       (clj->js)))
+  (let [options' (multi-transform (multi-path [:user :id (terminal b64/toBuffer)]
+                                              [:challenge (terminal b64/toBuffer)]
+                                              [:excludeCredentials ALL :id (terminal b64/toBuffer)])
+                                  options)]
+    (clj->js {:publicKey options'})))
 
 
 (defn get-credential-options
   [options]
-  (->> options
-      (multi-transform [:publicKey (multi-path [:challenge (terminal b64/toBuffer)]
-                                               [:allowCredentials ALL :id (terminal b64/toBuffer)])])
-      (clj->js)))
+  (let [options' (multi-transform (multi-path [:challenge (terminal b64/toBuffer)]
+                                              [:allowCredentials ALL :id (terminal b64/toBuffer)])
+                                  options)]
+    (clj->js {:publicKey options'})))
 
 
 (rf/reg-fx
  ::create-credential
  (fn [options]
-   (js/console.log options)
    (-> (js/navigator.credentials.create options)
        (.then #(rf/dispatch [::new-credential-info %]))
        (.catch js/console.error))))
@@ -48,7 +47,6 @@
 (rf/reg-fx
  ::get-credential
  (fn [options]
-   (js/console.log options)
    (-> (js/navigator.credentials.get options)
        (.then #(rf/dispatch [::existing-credential-info %]))
        (.catch js/console.error))))
@@ -57,7 +55,6 @@
 (rf/reg-event-fx
  ::handle-auth
  (fn [_ [_ response]]
-   (js/console.log response)
    (case (:action response)
      :register {::create-credential (create-credential-options (:options response))}
      :authenticate {::get-credential (get-credential-options (:options response))}
@@ -121,13 +118,12 @@
                    :response-format (ajax/transit-response-format)
                    :on-success [::auth-successful]
                    :on-failure [::auth-failed]}})))
-   
 
 
 (rf/reg-event-fx
  ::auth-api-error
  (fn [_ [_ error]]
-   (js/console.log error)
+   (js/console.error error)
    {}))
 
 

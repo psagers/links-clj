@@ -2,5 +2,7 @@
 links*.css
 links*.css.map
 manifest.json
+
 links*.js
+links*.js.map
 modules.edn
