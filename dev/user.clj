@@ -1,5 +1,6 @@
 (ns user
   (:require [clojure.core.async :as async :refer [<!!]]
+            [clojure.spec.test.alpha :as stest]
             [crux.api :as crux]
             [integrant.repl :refer [clear go halt prep init reset reset-all]]
             [integrant.repl.state :refer [system]]
@@ -54,7 +55,7 @@
 
   (crux/entity (db) (:crux.db/id user))
 
-  (-> (db/transact! (crux) (partial users/tx-remove-all-credentials user-id))
+  (-> (db/transact! (crux) (users/tx-remove-all-credentials user-id))
       <!!)
 
   (q {:find '[c]

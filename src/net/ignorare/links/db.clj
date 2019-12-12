@@ -9,6 +9,11 @@
 (s/def ::uuid #(instance? java.util.UUID %))
 (s/def ::base64url (s/and string? #(re-matches #"^[A-Za-z0-9_=-]*$" %)))
 
+;; A transactor function takes a Crux data source and (optionally) returns a
+;; vector of transaction operations (tx-ops).
+(s/def ::tx-fn (s/fspec :args (s/cat :db #(instance? crux.api.ICruxDatasource %))
+                        :ret (s/nilable (s/coll-of vector?, :kind vector?))))
+
 
 (defprotocol IntoCruxDatasource
   "A protocol for turning values into ICruxDatasource.
@@ -23,7 +28,9 @@
   :extend-via-metadata true
   (to-db [this]))
 
-(s/def ::datasource #(satisfies? IntoCruxDatasource %))
+;; clojure.core/satisfies? does not see metadata-based protocol implementations.
+(s/def ::datasource (s/or :proto #(satisfies? IntoCruxDatasource %)
+                          :meta #(contains? (meta %) `to-db)))
 
 
 (extend-protocol IntoCruxDatasource
@@ -35,6 +42,10 @@
   (to-db [this]
     (crux/db this)))
 
+(s/fdef to-db
+  :args (s/cat :this ::datasource)
+  :ret #(instance? crux.api.ICruxDatasource %))
+
 
 (defn q
   "A simple crux.api/q wrapper that takes any IntoCruxDatasource value."
@@ -42,30 +53,32 @@
   (crux/q (to-db db) query))
 
 (s/fdef q
-  :args (s/cat :db #(satisfies? IntoCruxDatasource %)
-               :query map?))
+  :args (s/cat :db ::datasource
+               :query map?)
+  :ret set?)
 
 
 (defn entity
-  "A simple crux.api/q wrapper that takes any IntoCruxDatasource value."
+  "A simple crux.api/entity wrapper that takes any IntoCruxDatasource value."
   [db entity-id]
   (crux/entity (to-db db) entity-id))
 
 (s/fdef entity
-  :args (s/cat :db #(satisfies? IntoCruxDatasource %)
-               :entity-id any?))
+  :args (s/cat :db ::datasource
+               :entity-id any?)
+  :ret (s/nilable map?))
 
 
 (defn ^:private transactor
   "Runs the Crux transactor as a core.async thread.
 
-  node: An ICruxNode.
+  node: An ICruxAPI.
 
   tx-chan: A core.async channel, which effectively pipes to crux.api/submit-tx.
   It expects values of the form [tx-fn, result-chan]. tx-fn is a function that
-  takes an ICruxDatasource and returns a vector of zero or more transaction
-  operations (the second argument to crux.api/submit-tx). result-chan is a
-  promise-chan that will receive the transaction details."
+  takes an ICruxDatasource and returns a vector of transaction operations (the
+  second argument to crux.api/submit-tx). result-chan is a promise-chan that
+  will receive the transaction details."
   [node tx-chan]
   (go-loop []
     (when-some [[tx-fn result-chan] (<! tx-chan)]
@@ -103,6 +116,13 @@
     (.close node)))
 
 
+(s/def ::node #(instance? crux.api.ICruxAPI %))
+(s/def ::tx-chan some?)  ;; async/chan?
+(s/def ::transactor-chan some?)  ;; async/chan?
+
+(s/def ::ig (s/keys :req-un [::node ::tx-chan ::transactor-chan]))
+
+
 (defn transact!
   "Applies a transaction function to our Crux node.
 
@@ -117,7 +137,7 @@
   Returns a promise-chan that will convey the result of crux.api/submit-tx, if
   any. If tx-fn throws an exception, it will be ignored and no transaction will
   be submitted."
-  [{:keys [node tx-chan] :as _crux} tx-fn & {:keys [sync?]}]
+  [{:keys [node tx-chan]} tx-fn & {:keys [sync?]}]
   (let [result-chan (async/promise-chan)]
     (async/put! tx-chan [tx-fn result-chan])
 
@@ -126,3 +146,10 @@
         (crux/sync node tx-time nil)))
 
     result-chan))
+
+(s/def ::sync? boolean?)
+
+(s/fdef transact!
+  :args (s/cat :crux ::ig
+               :tx-fn ::tx-fn
+               :optional (s/keys* :opt [::sync?])))

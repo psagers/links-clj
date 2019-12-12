@@ -101,12 +101,22 @@
   [user credential-id]
   (update user :links.user/credentials (fnil conj #{}) credential-id))
 
+(s/fdef conj-credential-id
+  :args (s/cat :user ::user
+               :credential-id :db/uuid)
+  :ret ::user)
+
 
 ;;
 ;; Transactor functions
 ;;
 
 (defn tx-remove-all-credentials
-  [user-id db]
-  (when-some [user (crux/entity db user-id)]
-    [[:crux.tx/cas user (dissoc user :links.user/credentials)]]))
+  [user-id]
+  (fn tx-remove-all-credentials-inner [db]
+    (when-some [user (crux/entity db user-id)]
+      [[:crux.tx/cas user (dissoc user :links.user/credentials)]])))
+
+(s/fdef tx-remove-all-credentials
+  :args (s/cat :user-id ::db/uuid)
+  :ret ::db/tx-fn)

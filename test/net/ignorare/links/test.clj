@@ -1,5 +1,6 @@
 (ns net.ignorare.links.test
-  (:require [integrant.core :as ig]
+  (:require [clojure.spec.test.alpha :as stest]
+            [integrant.core :as ig]
             [net.ignorare.links :refer [ig-config]]))
 
 
@@ -7,7 +8,7 @@
 (def ^:dynamic *system* nil)
 
 
-(defn ig-fixture
+(defn with-ig
   "Returns a test fixture for testing under a running Integrant system.
 
   config-fn: A function that transforms a configuration map. This is typically
@@ -22,7 +23,7 @@
 
   "
   ([]
-   (ig-fixture identity))
+   (with-ig identity))
 
   ([config-fn & args]
    (let [config (apply config-fn (ig-config :test) args)]
@@ -30,3 +31,9 @@
        (binding [*system* (ig/init config)]
          (f)
          (ig/halt! *system*))))))
+
+
+(defn with-instrumentation [f]
+  (stest/instrument)
+  (f)
+  (stest/unstrument))

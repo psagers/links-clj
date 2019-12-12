@@ -2,7 +2,6 @@
   (:require [better-cond.core :as b]
             [cheshire.core :as json]
             [clojure.spec.alpha :as s]
-            [crux.api :as crux]
             [net.ignorare.links.db :as db]
             [net.ignorare.links.models.users :as users]
             [net.ignorare.links.webauthn :as webauthn]
@@ -11,19 +10,18 @@
 
 
 (defn user-has-webauthn-credentials?
-  "True if a user has any credential entities."
+  "Truthy if a user has any WebAuthn credential entities."
   [db user-id]
-  (->> (db/q db {:find '[?credential-id]
-                 :where '[[user-id :links.user/credentials ?credential-id]
-                          [?credential-id :links.credential/mechanism :webauthn]]
-                 :args [{'user-id user-id}]})
-       (keep (comp (partial db/entity db) first))
-       (seq)
-       (boolean)))
+  (let [query {:find '[?credential-id]
+               :where '[[user-id :links.user/credentials ?credential-id]
+                        [?credential-id :links.credential.webauthn/id _]]
+               :args [{'user-id user-id}]}]
+    (-> (db/q db query) seq boolean)))
 
-(s/fdef user-has-credentials?
+(s/fdef user-has-webauthn-credentials?
   :args (s/cat :db ::db/datasource
-               :user-id ::db/uuid))
+               :user-id ::db/uuid)
+  :ret boolean?)
 
 
 (defmulti auth-handler
@@ -62,14 +60,14 @@
           responseJson (json/generate-string credential)]
 
     (= action :register)
-    (if-some [_result (webauthn/finish-registration crux webauthn user responseJson)]
+    (if-some [_result (webauthn/finish-registration webauthn user responseJson)]
       (do
         (log/info "Successful registration for" (:links.user/email user))
         (res/status 200))
       (res/status 403))
 
     (= action :authenticate)
-    (if-some [_result (webauthn/finish-assertion crux webauthn user responseJson)]
+    (if-some [_result (webauthn/finish-assertion webauthn user responseJson)]
       (do
         (log/info "Successful authentication for" (:links.user/email user))
         (res/status 200))

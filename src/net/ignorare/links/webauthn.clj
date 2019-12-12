@@ -29,7 +29,7 @@
             [net.ignorare.links.db :as db]
             [net.ignorare.links.models.users :as users]
             [taoensso.timbre :as log])
-  (:import (com.yubico.webauthn CredentialRepository FinishAssertionOptions FinishRegistrationOptions RegisteredCredential RelyingParty StartAssertionOptions StartRegistrationOptions)
+  (:import (com.yubico.webauthn AssertionResult CredentialRepository FinishAssertionOptions FinishRegistrationOptions RegisteredCredential RegistrationResult RelyingParty StartAssertionOptions StartRegistrationOptions)
            (com.yubico.webauthn.data ByteArray PublicKeyCredential PublicKeyCredentialDescriptor RelyingPartyIdentity UserIdentity UserVerificationRequirement)
            (com.yubico.webauthn.exception AssertionFailedException RegistrationFailedException)
            (java.nio ByteBuffer)
@@ -159,51 +159,51 @@
 
 (defn tx-add-webauthn-credential
   "A transactor function for adding a new WebAuthn credential to a user."
-  [user-id webauthn-id public-key db]
-  (when-some [user (crux/entity db user-id)]
-    (if-some [credential-id (users/lookup-webauthn-id db webauthn-id)]
-      ;; Attach an existing credential entity to the user.
-      (do
-        (log/debug "Attaching existing credential" credential-id "to user" (:crux.db/id user) "(" (:links.user/email user) ")")
-        [[:crux.tx/cas user (users/conj-credential-id user credential-id)]])
+  [user-id webauthn-id public-key]
+  (fn tx-add-webauthn-credential-inner [db]
+    (when-some [user (crux/entity db user-id)]
+      (if-some [credential-id (users/lookup-webauthn-id db webauthn-id)]
+        ;; Attach an existing credential entity to the user.
+        (do
+          (log/debug "Attaching existing credential" credential-id "to user" (:crux.db/id user) "(" (:links.user/email user) ")")
+          [[:crux.tx/cas user (users/conj-credential-id user credential-id)]])
 
-      ;; Create a new credential entity and attach it to the user.
-      (let [credential-id (UUID/randomUUID)]
-        (log/debug "Adding new credential" credential-id "to user" (:crux.db/id user) "(" (:links.user/email user) ")")
-        [[:crux.tx/cas user (users/conj-credential-id user credential-id)]
-         [:crux.tx/put {:crux.db/id credential-id
-                        :links.credential/mechanism :webauthn
-                        :links.credential.webauthn/id webauthn-id
-                        :links.credential.webauthn/public-key public-key}]]))))
+        ;; Create a new credential entity and attach it to the user.
+        (let [credential-id (UUID/randomUUID)]
+          (log/debug "Adding new credential" credential-id "to user" (:crux.db/id user) "(" (:links.user/email user) ")")
+          [[:crux.tx/cas user (users/conj-credential-id user credential-id)]
+           [:crux.tx/put {:crux.db/id credential-id
+                          :links.credential/mechanism :webauthn
+                          :links.credential.webauthn/id webauthn-id
+                          :links.credential.webauthn/public-key public-key}]])))))
 
 (s/fdef tx-add-webauthn-credential
   :args (s/cat :user-id ::db/uuid
                :webauthn-id :links.credential.webauthn/id
-               :public-key :links.credential.webauthn/public-key
-               :db #(instance? crux.api.ICruxDatasource %))
-  :ret (s/nilable (s/coll-of vector?, :kind vector?)))
+               :public-key :links.credential.webauthn/public-key)
+  :ret ::db/tx-fn)
 
 
 (defn tx-set-webauthn-signature-count
   "A transactor function to update the signature count on an existing
   credential entity."
-  [user-id webauthn-id signature-count db]
-  (let [query {:find '[?credential-id]
-               :where '[[user-id :links.user/credentials ?credential-id]
-                        [?credential-id :links.credential.webauthn/id webauthn-id]]
-               :args [{'user-id user-id
-                       'webauthn-id webauthn-id}]}]
-    (when-some [credential-id (ffirst (crux/q db query))]
-      (let [credential (crux/entity db credential-id)]
-        (log/debug "Setting credential" credential-id "signature count to" signature-count)
-        [[:crux.tx/cas credential (assoc credential :links.credential.webauthn/signature-count signature-count)]]))))
+  [user-id webauthn-id signature-count]
+  (fn tx-set-webauthn-signature-count-inner [db]
+    (let [query {:find '[?credential-id]
+                 :where '[[user-id :links.user/credentials ?credential-id]
+                          [?credential-id :links.credential.webauthn/id webauthn-id]]
+                 :args [{'user-id user-id
+                         'webauthn-id webauthn-id}]}]
+      (when-some [credential-id (ffirst (crux/q db query))]
+        (let [credential (crux/entity db credential-id)]
+          (log/debug "Setting credential" credential-id "signature count to" signature-count)
+          [[:crux.tx/cas credential (assoc credential :links.credential.webauthn/signature-count signature-count)]])))))
 
-(s/fdef tx-add-webauthn-credential
+(s/fdef tx-set-webauthn-signature-count
   :args (s/cat :user-id ::db/uuid
                :webauthn-id :links.credential.webauthn/id
-               :signature-count :links.credential.webauthn/signature-count
-               :db #(instance? crux.api.ICruxDatasource %))
-  :ret (s/nilable (s/coll-of vector?, :kind vector?)))
+               :signature-count :links.credential.webauthn/signature-count)
+  :ret ::db/tx-fn)
 
 
 ;;
@@ -234,10 +234,10 @@
   https://developer.mozilla.org/en-US/docs/Web/API/PublicKeyCredentialCreationOptions
   "
   [{:keys [rp requests]} user]
-  (when-some [request (creation-request @rp user)]
+  (when-some [request (creation-request rp user)]
     (swap! requests assoc (:crux.db/id user) request)
 
-    (let [rp-identity (.getIdentity @rp)]
+    (let [rp-identity (.getIdentity rp)]
       {:rp {:name (.getName rp-identity)
             :id (.getId rp-identity)}
        :user {:id (-> request .getUser .getId .getBase64Url)
@@ -263,22 +263,22 @@
   responseJson is documented at:
   https://developers.yubico.com/java-webauthn-server/JavaDoc/webauthn-server-core/latest/com/yubico/webauthn/data/PublicKeyCredential.html#parseRegistrationResponseJson(java.lang.String)
   "
-  [crux {:keys [rp requests]} user responseJson]
+  [{:keys [rp requests crux]} user responseJson]
   (if-some [request (get @requests (:crux.db/id user))]
     (try
       (let [response (PublicKeyCredential/parseRegistrationResponseJson responseJson)
-            result (.finishRegistration @rp (-> (FinishRegistrationOptions/builder)
-                                                (.request request)
-                                                (.response response)
-                                                (.build)))]
+            result (.finishRegistration rp (-> (FinishRegistrationOptions/builder)
+                                               (.request request)
+                                               (.response response)
+                                               (.build)))]
 
         (run! #(log/warn %) (.getWarnings result))
 
         ;; Registration was successful; store the new credential and clean up.
-        (db/transact! crux (partial tx-add-webauthn-credential
-                                    (:crux.db/id user)
-                                    (-> result .getKeyId .getId .getBase64Url)
-                                    (-> result .getPublicKeyCose .getBase64Url)))
+        (db/transact! crux (tx-add-webauthn-credential
+                            (:crux.db/id user)
+                            (-> result .getKeyId .getId .getBase64Url)
+                            (-> result .getPublicKeyCose .getBase64Url)))
 
         (swap! requests dissoc (:crux.db/id user))
 
@@ -292,7 +292,7 @@
   :args (s/cat :webauthn ::ig
                :user ::users/user
                :responseJson string?)
-  :ret (s/nilable map?))
+  :ret (s/nilable #(instance? RegistrationResult)))
 
 
 ;;
@@ -320,7 +320,7 @@
   https://developer.mozilla.org/en-US/docs/Web/API/PublicKeyCredentialRequestOptions
   "
   [{:keys [rp requests]} user]
-  (when-some [request (assertion-request @rp user)]
+  (when-some [request (assertion-request rp user)]
     (swap! requests assoc (:crux.db/id user) request)
 
     (let [options (.getPublicKeyCredentialRequestOptions request)
@@ -339,6 +339,11 @@
                           (some? transports)
                           (assoc :transports (mapv #(.toJsonString %) transports)))))))))))
 
+(s/fdef start-assertion
+  :args (s/cat :webauthn ::ig
+               :user ::users/user)
+  :ret (s/nilable map?))
+
 
 (defn finish-assertion
   "Completes the assertion ceremony.
@@ -346,22 +351,22 @@
   responseJson is documented at:
   https://developers.yubico.com/java-webauthn-server/JavaDoc/webauthn-server-core/latest/com/yubico/webauthn/data/PublicKeyCredential.html#parseAssertionResponseJson(java.lang.String)
   "
-  [crux {:keys [rp requests]} user responseJson]
+  [{:keys [rp requests crux]} user responseJson]
   (if-some [request (get @requests (:crux.db/id user))]
     (try
       (let [response (PublicKeyCredential/parseAssertionResponseJson responseJson)
-            result (.finishAssertion @rp (-> (FinishAssertionOptions/builder)
-                                             (.request request)
-                                             (.response response)
-                                             (.build)))]
+            result (.finishAssertion rp (-> (FinishAssertionOptions/builder)
+                                            (.request request)
+                                            (.response response)
+                                            (.build)))]
 
         (run! #(log/warn %) (.getWarnings result))
 
         (when (.isSuccess result)
-          (db/transact! crux (partial tx-set-webauthn-signature-count
-                                      (-> result .getUserHandle ByteArray->uuid)
-                                      (-> result .getCredentialId .getBase64Url)
-                                      (-> result .getSignatureCount)))
+          (db/transact! crux (tx-set-webauthn-signature-count
+                              (-> result .getUserHandle ByteArray->uuid)
+                              (-> result .getCredentialId .getBase64Url)
+                              (-> result .getSignatureCount)))
 
           (swap! requests dissoc (:crux.db/id user))
 
@@ -370,6 +375,12 @@
       (catch AssertionFailedException e
         (log/error e)))
     (log/warn "No request for " (:crux.db/id user) " (" (:links.user/email user) ")")))
+
+(s/fdef finish-assertion
+  :args (s/cat :webauthn ::ig
+               :user ::users/user
+               :responseJson string?)
+  :ret (s/nilable #(instance? AssertionResult)))
 
 
 ;;
@@ -403,12 +414,14 @@
 
 
 (defmethod ig/init-key :http/webauthn [_ {:keys [config crux]}]
-  {:rp (delay (relying-party config crux))
-   :requests (atom {})})
+  {:rp (relying-party config crux)
+   :requests (atom {})
+   :crux crux})
 
 
 ;; A spec for our Integrant component.
 (s/def ::rp #(instance? RelyingParty %))
 (s/def ::requests #(instance? clojure.lang.Atom %))
+(s/def ::crux ::db/ig)
 
-(s/def ::ig (s/keys :req-un [::rp ::requests]))
+(s/def ::ig (s/keys :req-un [::rp ::requests ::crux]))
