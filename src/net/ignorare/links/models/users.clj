@@ -2,28 +2,33 @@
   (:require [clojure.spec.alpha :as s]
             [crux.api :as crux]
             [net.ignorare.links.db :as db]
-            [taoensso.timbre :as log])
-  (:import [java.util UUID]))
+            [taoensso.timbre :as log]))
 
 
+(s/def ::user-id :crux.db/id)
 (s/def :links.user/email string?)
 (s/def :links.user/name string?)
-(s/def :links.user/credentials (s/coll-of ::db/uuid, :kind set?))
-(s/def :links.user/devices (s/coll-of ::db/uuid, :kind set?))
+(s/def :links.user/credentials (s/coll-of uuid?, :kind set?))
 (s/def ::user (s/keys :req [:crux.db/id
                             :links.user/email]))
 
+(s/def ::credential-id :crux.db/id)
+(s/def :links.credential/description string?)
 
-(s/def :links.credential/mechanism #{:webauthn})
 (s/def :links.credential.webauthn/id ::db/base64url)
 (s/def :links.credential.webauthn/public-key ::db/base64url)
 (s/def :links.credential.webauthn/signature-count int?)
-(s/def ::credential (s/keys :req [:crux.db/id
-                                  :links.credential/mechanism]))
+
+(s/def :links.credential.device/key string?)
+
 (s/def ::webauthn-credential (s/keys :req [:crux.db/id
-                                           :links.credential/mechanism
+                                           :links.credential/description
                                            :links.credential.webauthn/id
                                            :links.credential.webauthn/public-key]))
+
+(s/def ::device-credential (s/keys :req [:crux.db/id
+                                         :links.credential/description
+                                         :links.credential.device/key]))
 
 
 ;;
@@ -47,7 +52,7 @@
 (s/fdef user-id-for-email
   :args (s/cat :db ::db/datasource
                :email :links.user/email)
-  :ret (s/nilable #(instance? UUID %)))
+  :ret (s/nilable uuid?))
 
 
 (defn user-for-email
@@ -79,17 +84,24 @@
 (s/fdef lookup-webauthn-id
   :args (s/cat :db ::db/datasource
                :email :links.credential.webauthn/id)
-  :ret (s/nilable ::db/uuid))
+  :ret (s/nilable uuid?))
 
 
 (defn webauthn-credential-id-for-user
   [db user-id webauthn-id]
   (-> (db/q db {:find '[?credential-id]
                 :where '[[user-id :links.user/credentials ?credential-id]
-                         [?credential-id :links.credential/mechanism :webauthn]
                          [?credential-id :links.credential.webauthn/id webauthn-id]]
                 :args [{'webauthn-id webauthn-id
                         'user-id user-id}]})
+      (ffirst)))
+
+
+(defn lookup-device-key
+  [db device-key]
+  (-> (db/q db {:find '[?device-id]
+                :where '[[?device-id :links.device/key device-key]]
+                :args [{'device-key device-key}]})
       (ffirst)))
 
 
@@ -103,7 +115,7 @@
 
 (s/fdef conj-credential-id
   :args (s/cat :user ::user
-               :credential-id :db/uuid)
+               :credential-id uuid?)
   :ret ::user)
 
 
@@ -118,5 +130,5 @@
       [[:crux.tx/cas user (dissoc user :links.user/credentials)]])))
 
 (s/fdef tx-remove-all-credentials
-  :args (s/cat :user-id ::db/uuid)
+  :args (s/cat :user-id uuid?)
   :ret ::db/tx-fn)

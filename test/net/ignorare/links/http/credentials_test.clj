@@ -46,32 +46,36 @@
 
    cred-1-id
    {:crux.db/id cred-1-id
-    :links.credential/mechanism :webauthn
+    :links.credential/description "Security key 1"
     :links.credential.webauthn/id webauthn-1-id
     :links.credential.webauthn/public-key fake-public-key}
 
    cred-2-id
-   {:crux.db/id cred-2-id}
+   {:crux.db/id cred-2-id
+    :links.credential/description "Device 2"
+    :links.credential.device/key "key1"}
 
    cred-3-id
    {:crux.db/id cred-3-id
-    :links.credential/mechanism :webauthn
+    :links.credential/description "Security key 3"
     :links.credential.webauthn/id webauthn-3-id
     :links.credential.webauthn/public-key fake-public-key
     :links.credential.webauthn/signature-count 10}
 
    cred-4-id
    {:crux.db/id cred-4-id
-    :links.credential/mechanism :webauthn
+    :links.credential/description "Security key 4"
     :links.credential.webauthn/id webauthn-4-id
     :links.credential.webauthn/public-key fake-public-key}
 
    cred-5-id
-   {:crux.db/id cred-5-id}
+   {:crux.db/id cred-5-id
+    :links.credential/description "Device 5"
+    :links.credential.device/key "key2"}
 
    cred-6-id
    {:crux.db/id cred-6-id
-    :links.credential/mechanism :webauthn
+    :links.credential/description "Security key 6"
     :links.credential.webauthn/id webauthn-3-id
     :links.credential.webauthn/public-key fake-public-key}})
 

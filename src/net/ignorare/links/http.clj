@@ -3,9 +3,12 @@
             [cheshire.core :as json]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
+            [clojure.spec.alpha :as s]
             [hiccup.page :refer [html5]]
             [integrant.core :as ig]
+            [net.ignorare.links.db :as db]
             [net.ignorare.links.http.auth :as auth]
+            [net.ignorare.links.webauthn :as webauthn]
             [org.httpkit.server :as http-kit]
             [ring.middleware.defaults :refer [wrap-defaults site-defaults]]
             [ring.middleware.format :refer [wrap-restful-format]]
@@ -13,6 +16,14 @@
             [taoensso.sente :as sente]
             [taoensso.sente.server-adapters.http-kit :refer (get-sch-adapter)]
             [taoensso.timbre :as log :refer [spy]]))
+
+
+;; Request keys.
+(s/def ::crux ::db/crux)
+(s/def ::webauthn ::webauthn/webauthn)
+
+;; Session keys
+(s/def ::credential-ids (s/coll-of uuid?, :kind set?))
 
 
 ;;
@@ -31,6 +42,9 @@
 
 (defmethod ig/halt-key! :http/sente [_ sente]
   (some-> (:connected-uids sente) (remove-watch :connection-log)))
+
+
+(s/def ::sente map?)
 
 
 ;;
@@ -80,22 +94,58 @@
 
 (defn- chsk-handler [{:keys [ajax-get-or-ws-handshake-fn ajax-post-fn]}]
   (fn [req]
-    (case (:request-method req)
-      :get (ajax-get-or-ws-handshake-fn req)
-      :post (ajax-post-fn req)
-      (res/status 405))))
+    (if (-> req :session :uid)
+      (case (:request-method req)
+        :get (ajax-get-or-ws-handshake-fn req)
+        :post (ajax-post-fn req)
+        (res/status 405))
+      (res/status 401))))
 
 
-(defn- routes [crux webauthn sente]
-  ["/" {"" index-handler
-        "auth" {"" (-> (auth/get-auth-handler crux webauthn)
-                       (wrap-restful-format))}
-        "chsk" (chsk-handler sente)
-        "static/" (bidi.ring/resources {:prefix "public/"})}])
+(defn- api-handler
+  [routes]
+  (-> (bidi.ring/make-handler routes)
+      (wrap-restful-format)))
+
+(s/fdef api-handler
+  :args (s/cat :routes vector?)
+  :ret fn?)
 
 
-(defn- app [crux webauthn sente]
-  (-> (bidi.ring/make-handler (routes crux webauthn sente))
+(defn- routes
+  [sente]
+  ["/" {;; HTML and static assets.
+        "" index-handler
+        "static/" (bidi.ring/resources {:prefix "public/"})
+
+        ;; Conventional AJAX APIs for authentication and session management.
+        "auth/" (api-handler ["" {"webauthn/" {"register" auth/webauthn-register-handler
+                                               "login" auth/webauthn-login-handler}
+                                  "device" auth/device-handler
+                                  "logout" auth/logout-handler}])
+
+        ;; Everything else is over sente.
+        "chsk" (chsk-handler sente)}])
+
+(s/fdef routes
+  :args (s/cat :sente ::sente)
+  :ret vector?)
+
+
+(defn- wrap-system
+  "Adds relevant system components to requests."
+  [handler crux webauthn]
+  (fn [request]
+    (-> request
+        (assoc ::crux crux
+               ::webauthn webauthn)
+        (handler))))
+
+
+(defn- app
+  [crux webauthn sente]
+  (-> (bidi.ring/make-handler (routes sente))
+      (wrap-system crux webauthn)
       (wrap-defaults site-defaults)))
 
 

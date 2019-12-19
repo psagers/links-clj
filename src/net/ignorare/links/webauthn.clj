@@ -29,11 +29,26 @@
             [net.ignorare.links.db :as db]
             [net.ignorare.links.models.users :as users]
             [taoensso.timbre :as log])
-  (:import (com.yubico.webauthn AssertionResult CredentialRepository FinishAssertionOptions FinishRegistrationOptions RegisteredCredential RegistrationResult RelyingParty StartAssertionOptions StartRegistrationOptions)
-           (com.yubico.webauthn.data ByteArray PublicKeyCredential PublicKeyCredentialDescriptor RelyingPartyIdentity UserIdentity UserVerificationRequirement)
+  (:import (com.yubico.webauthn AssertionRequest CredentialRepository FinishAssertionOptions FinishRegistrationOptions RegisteredCredential RelyingParty StartAssertionOptions StartRegistrationOptions)
+           (com.yubico.webauthn.data ByteArray PublicKeyCredential PublicKeyCredentialCreationOptions PublicKeyCredentialDescriptor RelyingPartyIdentity UserIdentity)
            (com.yubico.webauthn.exception AssertionFailedException RegistrationFailedException)
            (java.nio ByteBuffer)
            (java.util Optional UUID)))
+
+
+(s/def ::ceremony-id string?)
+
+
+(def random (delay (java.security.SecureRandom.)))
+
+(defn new-ceremony-id []
+  (let [buf (byte-array 20)]
+    (.nextBytes @random buf)
+    (.toBase64Url (ByteArray. buf))))
+
+(s/fdef new-ceremony-id
+  :args (s/cat)
+  :ret ::ceremony-id)
 
 
 ;;
@@ -77,7 +92,7 @@
       :finally (.build))))
 
 (s/fdef registered-credential
-  :args (s/cat :user-id ::db/uuid
+  :args (s/cat :user-id uuid?
                :credential ::users/webauthn-credential)
   :ret #(instance? RegisteredCredential %))
 
@@ -85,13 +100,13 @@
 (defn webauthn-ids-for-email
   "Finds all WebAuthn credential IDs for the user with the given email."
   [db email]
-  (->> (db/q db
-             {:find '[?webauthn-id]
-              :where '[[?user-id :links.user/email email]
-                       [?user-id :links.user/credentials ?credential-id]
-                       [?credential-id :links.credential.webauthn/id ?webauthn-id]]
-              :args [{'email email}]})
-       (into #{} (map first))))
+  (let [query {:find '[?webauthn-id]
+               :where '[[?user-id :links.user/email email]
+                        [?user-id :links.user/credentials ?credential-id]
+                        [?credential-id :links.credential.webauthn/id ?webauthn-id]]
+               :args [{'email email}]}]
+
+    (db/q db query (map first))))
 
 (s/fdef webauthn-ids-for-email
   :args (s/cat :db ::db/datasource
@@ -113,7 +128,7 @@
 (s/fdef public-key-for-webauthn-id
   :args (s/cat :db ::db/datasource
                :webauthn-id :links.credential.webauthn/id
-               :user-id ::db/uuid)
+               :user-id uuid?)
   :ret (s/nilable :links.credential.webauthn/public-key))
 
 
@@ -158,34 +173,35 @@
 ;;
 
 (defn tx-add-webauthn-credential
-  "A transactor function for adding a new WebAuthn credential to a user."
+  "Returns a transactor function for adding a new WebAuthn credential to a
+  user."
   [user-id webauthn-id public-key]
   (fn tx-add-webauthn-credential-inner [db]
     (when-some [user (crux/entity db user-id)]
       (if-some [credential-id (users/lookup-webauthn-id db webauthn-id)]
         ;; Attach an existing credential entity to the user.
         (do
-          (log/debug "Attaching existing credential" credential-id "to user" (:crux.db/id user) "(" (:links.user/email user) ")")
+          (log/debug "Attaching existing credential" credential-id "to user" user-id "(" (:links.user/email user) ")")
           [[:crux.tx/cas user (users/conj-credential-id user credential-id)]])
 
         ;; Create a new credential entity and attach it to the user.
         (let [credential-id (UUID/randomUUID)]
-          (log/debug "Adding new credential" credential-id "to user" (:crux.db/id user) "(" (:links.user/email user) ")")
+          (log/debug "Adding new credential" credential-id "to user" user-id "(" (:links.user/email user) ")")
           [[:crux.tx/cas user (users/conj-credential-id user credential-id)]
            [:crux.tx/put {:crux.db/id credential-id
-                          :links.credential/mechanism :webauthn
+                          :links.credential/description "WebAuthn"
                           :links.credential.webauthn/id webauthn-id
                           :links.credential.webauthn/public-key public-key}]])))))
 
 (s/fdef tx-add-webauthn-credential
-  :args (s/cat :user-id ::db/uuid
+  :args (s/cat :user-id uuid?
                :webauthn-id :links.credential.webauthn/id
                :public-key :links.credential.webauthn/public-key)
   :ret ::db/tx-fn)
 
 
 (defn tx-set-webauthn-signature-count
-  "A transactor function to update the signature count on an existing
+  "Returns a transactor function to update the signature count on an existing
   credential entity."
   [user-id webauthn-id signature-count]
   (fn tx-set-webauthn-signature-count-inner [db]
@@ -200,7 +216,7 @@
           [[:crux.tx/cas credential (assoc credential :links.credential.webauthn/signature-count signature-count)]])))))
 
 (s/fdef tx-set-webauthn-signature-count
-  :args (s/cat :user-id ::db/uuid
+  :args (s/cat :user-id uuid?
                :webauthn-id :links.credential.webauthn/id
                :signature-count :links.credential.webauthn/signature-count)
   :ret ::db/tx-fn)
@@ -211,8 +227,7 @@
 ;;
 
 (defn- creation-request
-  ^com.yubico.webauthn.data.PublicKeyCredentialCreationOptions
-  [^RelyingParty rp user]
+  ^PublicKeyCredentialCreationOptions [^RelyingParty rp user]
   (let [email (:links.user/email user)
         options (-> (StartRegistrationOptions/builder)
                     (.user (-> (UserIdentity/builder)
@@ -225,6 +240,24 @@
     (.startRegistration rp options)))
 
 
+(defn- encoded-registration-options
+  [^PublicKeyCredentialCreationOptions request]
+  (let [rp-identity (.getRp request)
+        user-identity (.getUser request)]
+    {:rp {:name (.getName rp-identity)
+          :id (.getId rp-identity)}
+     :user {:id (-> user-identity .getId .getBase64Url)
+            :name (.getName user-identity)
+            :displayName (.getDisplayName user-identity)}
+     :challenge (-> request .getChallenge .getBase64Url)
+     :pubKeyCredParams (vec (for [param (.getPubKeyCredParams request)]
+                               {:type (-> param .getType .toJsonString)
+                                :alg (-> param .getAlg .toJsonNumber)}))
+     :excludeCredentials (vec (for [desc (-> request .getExcludeCredentials (.orElse #{}))]
+                                 {:type (-> desc .getType .toJsonString)
+                                  :id (-> desc .getId .getBase64Url)}))}))
+
+
 (defn start-registration
   "Begins the registration ceremony.
 
@@ -235,26 +268,14 @@
   "
   [{:keys [rp requests]} user]
   (when-some [request (creation-request rp user)]
-    (swap! requests assoc (:crux.db/id user) request)
-
-    (let [rp-identity (.getIdentity rp)]
-      {:rp {:name (.getName rp-identity)
-            :id (.getId rp-identity)}
-       :user {:id (-> request .getUser .getId .getBase64Url)
-              :name (-> request .getUser .getName)
-              :displayName (-> request .getUser .getDisplayName)}
-       :challenge (-> request .getChallenge .getBase64Url)
-       :pubKeyCredParams (vec (for [param (.getPubKeyCredParams request)]
-                                {:type (-> param .getType .toJsonString)
-                                 :alg (-> param .getAlg .toJsonNumber)}))
-       :excludeCredentials (vec (for [desc (-> request .getExcludeCredentials (.orElse #{}))]
-                                  {:type (-> desc .getType .toJsonString)
-                                   :id (-> desc .getId .getBase64Url)}))})))
+    (let [ceremony-id (new-ceremony-id)]
+      (swap! requests assoc ceremony-id request)
+      [ceremony-id (encoded-registration-options request)])))
 
 (s/fdef start-registration
-  :args (s/cat :webauthn ::ig
+  :args (s/cat :webauthn ::webauthn
                :user ::users/user)
-  :ret (s/nilable map?))
+  :ret (s/nilable (s/tuple ::ceremony-id map?)))
 
 
 (defn finish-registration
@@ -262,87 +283,100 @@
 
   responseJson is documented at:
   https://developers.yubico.com/java-webauthn-server/JavaDoc/webauthn-server-core/latest/com/yubico/webauthn/data/PublicKeyCredential.html#parseRegistrationResponseJson(java.lang.String)
+
+  If successful, returns the user-id and credential-id of the new credential.
   "
-  [{:keys [rp requests crux]} user responseJson]
-  (if-some [request (get @requests (:crux.db/id user))]
+  [{:keys [rp requests crux]} ceremony-id responseJson]
+  (when-some [request (get @requests ceremony-id)]
     (try
       (let [response (PublicKeyCredential/parseRegistrationResponseJson responseJson)
             result (.finishRegistration rp (-> (FinishRegistrationOptions/builder)
                                                (.request request)
                                                (.response response)
-                                               (.build)))]
+                                               (.build)))
+            user-id (-> request .getUser .getId ByteArray->uuid)
+            webauthn-id (-> result .getKeyId .getId .getBase64Url)
+            public-key (-> result .getPublicKeyCose .getBase64Url)]
 
         (run! #(log/warn %) (.getWarnings result))
 
         ;; Registration was successful; store the new credential and clean up.
-        (db/transact! crux (tx-add-webauthn-credential
-                            (:crux.db/id user)
-                            (-> result .getKeyId .getId .getBase64Url)
-                            (-> result .getPublicKeyCose .getBase64Url)))
+        (db/transact! crux
+                      (tx-add-webauthn-credential user-id webauthn-id public-key)
+                      :sync? true)
+        (swap! requests dissoc ceremony-id)
 
-        (swap! requests dissoc (:crux.db/id user))
-
-        result)
+        [user-id, (users/lookup-webauthn-id crux webauthn-id)])
 
       (catch RegistrationFailedException e
-        (log/error e)))
-    (log/warn "No request for " (:crux.db/id user) " (" (:links.user/email user) ")")))
+        (log/error e)))))
 
 (s/fdef finish-registration
-  :args (s/cat :webauthn ::ig
-               :user ::users/user
+  :args (s/cat :webauthn ::webauthn
+               :ceremony-id ::ceremony-id
                :responseJson string?)
-  :ret (s/nilable #(instance? RegistrationResult)))
+  :ret (s/nilable (s/tuple ::users/user-id ::users/credential-id)))
 
 
 ;;
 ;; Authentication (aka assertion)
 ;;
 
-(defn assertion-request
-  ^com.yubico.webauthn.AssertionRequest
-  [^RelyingParty rp user]
-  (let [email (:links.user/email user)
-        options (-> (StartAssertionOptions/builder)
-                    (.username email)
-                    (.userVerification UserVerificationRequirement/PREFERRED)
-                    (.build))]
-
+(defn- assertion-request
+  ^AssertionRequest [^RelyingParty rp username]
+  (let [options (cond-> (StartAssertionOptions/builder)
+                        (some? username) (.username username)
+                        :finally (.build))]
     (.startAssertion rp options)))
+
+
+(defn- encoded-assertion-options
+  "Encodes an AssertionRequest into a serializable data structure.
+
+  This is what we pass back up to the client for the credentials API.
+  "
+  [^AssertionRequest request]
+  (let [options (.getPublicKeyCredentialRequestOptions request)
+        allowed-credentials (.getAllowCredentials options)]
+    (cond-> {:rpId (.getRpId options)
+             :challenge (-> options .getChallenge .getBase64Url)
+             :userVerification (-> options .getUserVerification .toJsonString)}
+
+      (.isPresent allowed-credentials)
+      (assoc :allowCredentials
+             (vec (for [desc (.get allowed-credentials)]
+                    (let [transports (-> desc .getTransports (.orElse nil))]
+                      (cond-> {:type (-> desc .getType .toJsonString)
+                               :id (-> desc .getId .getBase64Url)}
+
+                        (some? transports)
+                        (assoc :transports (mapv #(.toJsonString %) transports))))))))))
+
+
+(s/fdef encoded-assertion-options
+  :args (s/cat :request #(instance? AssertionRequest %))
+  :ret map?)
 
 
 (defn start-assertion
   "Begins the assertion ceremony.
 
-  Returns a PublicKeyCredentialRequestOptions structure with BufferSource values
-  encoded as base64-url.
+  Returns a 2-tuple: a UUID to identify the request and a map to return to the
+  client for signing. The map is a PublicKeyCredentialRequestOptions structure
+  with binary data base64-url-encoded.
 
   https://developer.mozilla.org/en-US/docs/Web/API/PublicKeyCredentialRequestOptions
   "
-  [{:keys [rp requests]} user]
-  (when-some [request (assertion-request rp user)]
-    (swap! requests assoc (:crux.db/id user) request)
-
-    (let [options (.getPublicKeyCredentialRequestOptions request)
-          allowed-credentials (.getAllowCredentials options)]
-      (cond-> {:rpId (.getRpId options)
-               :challenge (-> options .getChallenge .getBase64Url)
-               :userVerification (-> options .getUserVerification .toJsonString)}
-
-        (.isPresent allowed-credentials)
-        (assoc :allowCredentials
-               (vec (for [desc (.get allowed-credentials)]
-                      (let [transports (-> desc .getTransports (.orElse nil))]
-                        (cond-> {:type (-> desc .getType .toJsonString)
-                                 :id (-> desc .getId .getBase64Url)}
-
-                          (some? transports)
-                          (assoc :transports (mapv #(.toJsonString %) transports)))))))))))
+  [{:keys [rp requests]} username]
+  (when-some [request (assertion-request rp username)]
+    (let [ceremony-id (new-ceremony-id)]
+      (swap! requests assoc ceremony-id request)
+      [ceremony-id (encoded-assertion-options request)])))
 
 (s/fdef start-assertion
-  :args (s/cat :webauthn ::ig
-               :user ::users/user)
-  :ret (s/nilable map?))
+  :args (s/cat :webauthn ::webauthn
+               :username (s/nilable string?))
+  :ret (s/nilable (s/tuple ::ceremony-id map?)))
 
 
 (defn finish-assertion
@@ -350,37 +384,37 @@
 
   responseJson is documented at:
   https://developers.yubico.com/java-webauthn-server/JavaDoc/webauthn-server-core/latest/com/yubico/webauthn/data/PublicKeyCredential.html#parseAssertionResponseJson(java.lang.String)
+
+  If successful, returns the credential-id used.
   "
-  [{:keys [rp requests crux]} user responseJson]
-  (if-some [request (get @requests (:crux.db/id user))]
+  [{:keys [rp requests crux]} ceremony-id responseJson]
+  (if-some [request (get @requests ceremony-id)]
     (try
       (let [response (PublicKeyCredential/parseAssertionResponseJson responseJson)
             result (.finishAssertion rp (-> (FinishAssertionOptions/builder)
                                             (.request request)
                                             (.response response)
-                                            (.build)))]
+                                            (.build)))
+            user-id (-> result .getUserHandle ByteArray->uuid)
+            webauthn-id (-> result .getCredentialId .getBase64Url)
+            signature-count (.getSignatureCount result)]
 
         (run! #(log/warn %) (.getWarnings result))
 
         (when (.isSuccess result)
-          (db/transact! crux (tx-set-webauthn-signature-count
-                              (-> result .getUserHandle ByteArray->uuid)
-                              (-> result .getCredentialId .getBase64Url)
-                              (-> result .getSignatureCount)))
+          (db/transact! crux (tx-set-webauthn-signature-count user-id webauthn-id signature-count))
+          (swap! requests dissoc ceremony-id)
 
-          (swap! requests dissoc (:crux.db/id user))
-
-          result))
+          [user-id, (users/lookup-webauthn-id crux webauthn-id)]))
 
       (catch AssertionFailedException e
-        (log/error e)))
-    (log/warn "No request for " (:crux.db/id user) " (" (:links.user/email user) ")")))
+        (log/error e)))))
 
 (s/fdef finish-assertion
-  :args (s/cat :webauthn ::ig
-               :user ::users/user
+  :args (s/cat :webauthn ::webauthn
+               :ceremony-id ::ceremony-id
                :responseJson string?)
-  :ret (s/nilable #(instance? AssertionResult)))
+  :ret (s/nilable (s/tuple ::users/user-id ::users/credential-id)))
 
 
 ;;
@@ -389,14 +423,13 @@
 
 (defn cancel-ceremony
   "Cancels an outstanding registration or assertion ceremony."
-  [{:keys [requests]} user-id]
-  (swap! requests dissoc user-id)
+  [{:keys [requests]} ceremony-id]
+  (swap! requests dissoc ceremony-id)
   nil)
 
 (s/fdef cancel-ceremony
-  :args (s/cat :webauthn ::ig
-               :user-id ::db/uuid)
-  :ret nil?)
+  :args (s/cat :webauthn ::webauthn
+               :ceremony-id ::ceremony-id))
 
 
 ;;
@@ -422,6 +455,6 @@
 ;; A spec for our Integrant component.
 (s/def ::rp #(instance? RelyingParty %))
 (s/def ::requests #(instance? clojure.lang.Atom %))
-(s/def ::crux ::db/ig)
+(s/def ::crux ::db/crux)
 
-(s/def ::ig (s/keys :req-un [::rp ::requests ::crux]))
+(s/def ::webauthn (s/keys :req-un [::rp ::requests ::crux]))

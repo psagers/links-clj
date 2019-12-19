@@ -7,6 +7,13 @@
             [reagent.core :as r]))
 
 
+(def auth-states
+  {:connecting {::sente-connected :connected
+                ::sente-unauthorized :auth-device}
+   :unauthenticated {::authenticated :connecting}
+   :connected {::disconnected :connecting}})
+
+
 
 (rf/reg-event-db
  ::set-email

@@ -6,8 +6,7 @@
             [taoensso.timbre :as log]))
 
 
-(s/def ::uuid #(instance? java.util.UUID %))
-(s/def ::base64url (s/and string? #(re-matches #"^[A-Za-z0-9_=-]*$" %)))
+(s/def ::base64url (s/and string? #(re-matches #"^[A-Za-z0-9_-]+={0,3}$" %)))
 
 ;; A transactor function takes a Crux data source and (optionally) returns a
 ;; vector of transaction operations (tx-ops).
@@ -49,12 +48,16 @@
 
 (defn q
   "A simple crux.api/q wrapper that takes any IntoCruxDatasource value."
-  [db query]
-  (crux/q (to-db db) query))
+  ([db query]
+   (crux/q (to-db db) query))
+
+  ([db query xform]
+   (into #{} xform (q db query))))
 
 (s/fdef q
   :args (s/cat :db ::datasource
-               :query map?)
+               :query map?
+               :xform (s/? fn?))
   :ret set?)
 
 
@@ -120,7 +123,7 @@
 (s/def ::tx-chan some?)  ;; async/chan?
 (s/def ::transactor-chan some?)  ;; async/chan?
 
-(s/def ::ig (s/keys :req-un [::node ::tx-chan ::transactor-chan]))
+(s/def ::crux (s/keys :req-un [::node ::tx-chan ::transactor-chan]))
 
 
 (defn transact!
@@ -150,6 +153,6 @@
 (s/def ::sync? boolean?)
 
 (s/fdef transact!
-  :args (s/cat :crux ::ig
+  :args (s/cat :crux ::crux
                :tx-fn ::tx-fn
                :optional (s/keys* :opt [::sync?])))
