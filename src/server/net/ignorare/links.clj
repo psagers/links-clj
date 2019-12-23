@@ -3,6 +3,7 @@
             [integrant.core :as ig]
             [net.ignorare.links.db]
             [net.ignorare.links.http]
+            [net.ignorare.links.sente]
             [net.ignorare.links.sys]
             [net.ignorare.links.webauthn])
   (:gen-class))

@@ -1,4 +1,4 @@
-(ns net.ignorare.links.ui.auth
+(ns net.ignorare.links.auth
   (:require ["base64url" :as b64]
             [ajax.core :as ajax]
             [com.rpl.specter :refer [multi-transform multi-path terminal ALL]]

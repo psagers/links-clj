@@ -12,10 +12,7 @@
             [org.httpkit.server :as http-kit]
             [ring.middleware.defaults :refer [wrap-defaults site-defaults]]
             [ring.middleware.format :refer [wrap-restful-format]]
-            [ring.util.response :as res]
-            [taoensso.sente :as sente]
-            [taoensso.sente.server-adapters.http-kit :refer (get-sch-adapter)]
-            [taoensso.timbre :as log :refer [spy]]))
+            [ring.util.response :as res]))
 
 
 ;; Request keys.
@@ -24,27 +21,6 @@
 
 ;; Session keys
 (s/def ::credential-ids (s/coll-of uuid?, :kind set?))
-
-
-;;
-;; https://github.com/ptaoussanis/sente
-;;
-
-(defn- log-connections [_key _connected_uids old-state new-state]
-  (when (not= old-state new-state)
-    (spy :info "connected-uids" new-state)))
-
-
-(defmethod ig/init-key :http/sente [_ _]
-  (let [sente (sente/make-channel-socket! (get-sch-adapter) {})]
-    (add-watch (:connected-uids sente) :connection-log log-connections)
-    sente))
-
-(defmethod ig/halt-key! :http/sente [_ sente]
-  (some-> (:connected-uids sente) (remove-watch :connection-log)))
-
-
-(s/def ::sente map?)
 
 
 ;;
@@ -94,12 +70,10 @@
 
 (defn- chsk-handler [{:keys [ajax-get-or-ws-handshake-fn ajax-post-fn]}]
   (fn [req]
-    (if (-> req :session :uid)
-      (case (:request-method req)
-        :get (ajax-get-or-ws-handshake-fn req)
-        :post (ajax-post-fn req)
-        (res/status 405))
-      (res/status 401))))
+    (case (:request-method req)
+      :get (ajax-get-or-ws-handshake-fn req)
+      :post (ajax-post-fn req)
+      (res/status 405))))
 
 
 (defn- api-handler

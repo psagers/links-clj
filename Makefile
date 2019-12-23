@@ -8,7 +8,8 @@ clean:
          resources/links/modules.edn \
          resources/public/links*.css \
          resources/public/links*.css.map \
-         resources/public/links*.js
+         resources/public/links*.js \
+         resources/public/links*.js.map
 
 brunch:
 	bin/brunch build --production

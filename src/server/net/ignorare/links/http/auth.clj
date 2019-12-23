@@ -5,8 +5,6 @@
             [net.ignorare.links.webauthn :as webauthn]
             [ring.util.response :as res]))
 
-(alias 'http 'net.ignorare.links.http)
-
 
 (def conj-set (fnil conj #{}))
 
@@ -17,10 +15,10 @@
   (if (= (:uid session) user-id)
     (-> session
         (assoc :uid user-id)
-        (update session ::http/credentials conj-set credential-id))
+        (update session :net.ignorare.links.http/credentials conj-set credential-id))
     (assoc session
            :uid user-id
-           ::http/credentials #{credential-id})))
+           :net.ignorare.links.http/credentials #{credential-id})))
 
 
 ;;
@@ -31,7 +29,7 @@
 
 
 (defmethod webauthn-register-handler :get
-  [{::http/keys [crux webauthn] :as req}]
+  [{:net.ignorare.links.http/keys [crux webauthn] :as req}]
   (let [email (-> req :params :email not-empty)
         user (when email (users/user-for-email crux email))]
     (if user
@@ -42,7 +40,7 @@
 
 
 (defmethod webauthn-register-handler :post
-  [{::http/keys [webauthn] :as req}]
+  [{:net.ignorare.links.http/keys [webauthn] :as req}]
   (let [{:keys [ceremony-id response]} (:params req)
         responseJson (json/generate-string response)]
     (if-some [[user-id credential-id] (webauthn/finish-registration webauthn ceremony-id responseJson)]
@@ -52,7 +50,7 @@
 
 
 (defmethod webauthn-register-handler :delete
-  [{::http/keys [webauthn] :as req}]
+  [{:net.ignorare.links.http/keys [webauthn] :as req}]
   (if-some [ceremony-id (-> req :params :ceremony-id not-empty)]
     (do
       (webauthn/cancel-ceremony webauthn ceremony-id)
@@ -73,7 +71,7 @@
 
 
 (defmethod webauthn-login-handler :get
-  [{::http/keys [webauthn] :as req}]
+  [{:net.ignorare.links.http/keys [webauthn] :as req}]
   (let [email (-> req :params :email not-empty)
         [ceremony-id options] (webauthn/start-assertion webauthn email)]
     (res/response {:ceremony-id ceremony-id
@@ -81,7 +79,7 @@
 
 
 (defmethod webauthn-login-handler :post
-  [{::http/keys [webauthn] :as req}]
+  [{:net.ignorare.links.http/keys [webauthn] :as req}]
   (let [{:keys [ceremony-id response]} (:params req)
         responseJson (json/generate-string response)]
     (if-some [[user-id credential-id] (webauthn/finish-assertion webauthn ceremony-id responseJson)]
@@ -91,7 +89,7 @@
 
 
 (defmethod webauthn-login-handler :delete
-  [{::http/keys [webauthn] :as req}]
+  [{:net.ignorare.links.http/keys [webauthn] :as req}]
   (if-some [ceremony-id (-> req :params :ceremony-id not-empty)]
     (do
       (webauthn/cancel-ceremony webauthn ceremony-id)
@@ -112,7 +110,7 @@
 
 
 (defmethod device-handler :post
-  [{::http/keys [crux] :as req}]
+  [{:net.ignorare.links.http/keys [crux] :as req}]
   (let [device-key (-> req :param :device-key)
         query {:find '[?user-id ?credential-id]
                :where '[[?user-id :links.user/credentials ?credential-id]

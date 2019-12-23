@@ -3,4 +3,5 @@
   {:exclude [(better-cond.core/cond)
              (meander.epsilon/match)]}}
 
- :lint-as {reagent.core/with-let clojure.core/let}}
+ :lint-as {reagent.core/with-let clojure.core/let
+           maximgb.re-state.core/def-machine clojure.core/def}}
