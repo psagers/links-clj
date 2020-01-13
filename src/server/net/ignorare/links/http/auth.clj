@@ -13,9 +13,7 @@
   "Returns a new session map with the given user logged in."
   [session user-id credential-id]
   (if (= (:uid session) user-id)
-    (-> session
-        (assoc :uid user-id)
-        (update session :net.ignorare.links.http/credentials conj-set credential-id))
+    (update session :net.ignorare.links.http/credentials conj-set credential-id)
     (assoc session
            :uid user-id
            :net.ignorare.links.http/credentials #{credential-id})))

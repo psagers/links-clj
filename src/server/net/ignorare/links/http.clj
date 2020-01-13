@@ -125,7 +125,7 @@
 
 (defmethod ig/init-key :http/server [_ {:keys [config crux webauthn sente]}]
   (let [stop-fn (http-kit/run-server (app crux webauthn sente)
-                                     {:port (-> config :http :port)})]
+                                     {:port (get-in config [:http :port])})]
     {:stop-fn stop-fn}))
 
 (defmethod ig/halt-key! :http/server [_ {:keys [stop-fn]}]

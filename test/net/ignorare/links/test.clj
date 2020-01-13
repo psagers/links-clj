@@ -11,26 +11,18 @@
 (defn with-ig
   "Returns a test fixture for testing under a running Integrant system.
 
-  config-fn: A function that transforms a configuration map. This is typically
-  used to remove irrelevant keys for faster tests. The aero profile is already
-  set to :test.
-
-  args: Additional args to config-fn.
+  keys: System keys to initialize.
 
   Example:
 
-    (use-fixtures :each (ig-fixture dissoc :http/server :http/sente))
+    (use-fixtures :each (with-ig #{:db/crux}))
 
   "
-  ([]
-   (with-ig identity))
-
-  ([config-fn & args]
-   (let [config (apply config-fn (ig-config :test) args)]
-     (fn [f]
-       (binding [*system* (ig/init config)]
-         (f)
-         (ig/halt! *system*))))))
+  [keys]
+  (fn [f]
+    (binding [*system* (ig/init (ig-config :test) keys)]
+      (f)
+      (ig/halt! *system*))))
 
 
 (defn with-instrumentation [f]

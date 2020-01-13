@@ -4,7 +4,9 @@
             [clojure.core.async :as async :refer [go-loop <!]]
             [goog.dom.dataset :as dataset]
             [maximgb.re-state.core :as rs]
+            [maximgb.re-state.utils]
             [net.ignorare.links.db :as db]
+            [net.ignorare.links.state :as state]
             [re-frame.core :as rf]
             [reagent.core :as r]
             [taoensso.sente :as sente]))
@@ -32,15 +34,13 @@
                          ;; Authentication successful.
                          :auth-success {:target :connect}}}
 
-   ;; Try to connect one more time. Success or fail, the result will get kicked
-   ;; up to the parent.
+   ;; Try to connect one more time.
    :connect {:entry ::reconnect
              :on {:handshake :done}}
 
    ;; We may or may not be authenticated, but either way we've done all we can.
    ;; Kick it back up.
-   :done {:entry {:type ::interpreter-send!
-                  :event :connected}}})
+   :done {:entry (state/send-action :connected)}})
 
 
 ;; Represents the state of our sente connection.
@@ -65,6 +65,9 @@
                                      :target :connecting}}}}})
 
 
+(def interpreter (rs/interpreter! connection))
+
+
 ;;
 ;; Initialization
 ;;
@@ -85,17 +88,15 @@
 
 (rf/reg-fx
  ::interpreter-start
- (fn [interpreter]
+ (fn []
    (rs/interpreter-start! interpreter)))
 
 (db/reg-event-fx
  ::init
  [(rf/inject-cofx ::csrf-token)]
- (fn [{:keys [db] :as cofx} _]
-   (let [interpreter (rs/interpreter! connection)]
-     {:db (assoc db ::interpreter interpreter)
-      ::interpreter-start interpreter
-      ::make-channel-socket (::csrf-token cofx)})))
+ (fn [cofx _]
+   {::interpreter-start interpreter
+    ::make-channel-socket (::csrf-token cofx)}))
 
 
 ;;
@@ -105,30 +106,24 @@
 ;; For dispatching state machine events.
 (db/reg-event-fx
  ::interpreter-send!
- (fn [{:keys [db]} [_ event & args]]
-   (let [interp (::interpreter db)]
-     {::rs/re-state [:send! (into [interp event] args)]})))
-
-;; For sending state machine events from the state definitions.
-(rs/def-action-fx
-  connection
-  ::interpreter-send!
-  (fn [{:keys [db]} _ & {:keys [event args]}]
-    (let [interp (::interpreter db)]
-      {::rs/re-state [:send! (into [interp event] args)]})))
+ (fn [_ [_ event & args]]
+   {::rs/re-state [:send! (into [interpreter event] args)]}))
 
 
 ;;
 ;; Sente
 ;;
 
+(defn- dispatch-client-msgs
+  [{:keys [ch-recv] :as _sente}]
+  (go-loop []
+    (when-some [msg (<! ch-recv)]
+      (rf/dispatch [::client-msg msg])
+      (recur))))
+
 (rf/reg-fx
  ::init-sente-router
- (fn [{:keys [ch-recv]}]
-   (go-loop [msg (<! ch-recv)]
-     (when msg
-       (rf/dispatch [::client-msg msg])
-       (recur (<! ch-recv))))))
+ dispatch-client-msgs)
 
 (rf/reg-fx
  ::reconnect
@@ -215,15 +210,15 @@
   (js/console.debug "Ignoring %s" (:event msg)))
 
 
-(db/reg-event-fx
- ::client-msg
- (fn [_cofx [_ msg]]
-   {::client-msg msg}))
-
 (rf/reg-fx
  ::client-msg
  (fn [msg]
    (client-msg msg)))
+
+(db/reg-event-fx
+ ::client-msg
+ (fn [_cofx [_ msg]]
+   {::client-msg msg}))
 
 
 (defmethod client-msg :chsk/handshake
@@ -242,29 +237,31 @@
 ;; View
 ;;
 
-;; The singleton connection interpreter.
+;; True if we're waiting for authentication. Someone needs to authenticate
+;; (updating local or session state) and reconnect.
 (rf/reg-sub
- ::interpreter
- (fn [db _]
-   (::interpreter db)))
+ ::auth-required?
+ (fn [_ _]
+   (rs/isubscribe-state interpreter))
+ (fn [state _]
+   (= state :unauthenticated)))
 
 (defn render-state
   [state]
   (cond
-    (keyword? state) (str state)
-    (string? state) (keyword state)
+    (keyword? state) (name state)
+    (string? state) state
     (map? state) (let [[k v] (first state)]
                    (str (render-state k) " > " (render-state v)))
     :else state))
 
 (defn status-view []
-  (r/with-let [interpreter (rf/subscribe [::interpreter])]
-    (r/with-let [state (rs/isubscribe-state @interpreter)]
-      [:div.container
-       [:div.columns
-        [:div.column]
-        [:div.column
-         [:div.box
-          [:div.content
-           [:b "State: "] (render-state @state)]]]
-        [:div.column]]])))
+  (r/with-let [state (rs/isubscribe-state interpreter)]
+    [:div.container
+     [:div.columns
+      [:div.column]
+      [:div.column
+       [:div.box
+        [:div.content
+         [:b "State: "] (render-state @state)]]]
+      [:div.column]]]))

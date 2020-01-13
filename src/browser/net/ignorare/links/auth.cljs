@@ -2,9 +2,11 @@
   (:require ["base64url" :as b64]
             [ajax.core :as ajax]
             [com.rpl.specter :refer [multi-transform multi-path terminal ALL]]
+            [fork.core :as fork]
             [goog.dom.dataset :as dataset]
             [re-frame.core :as rf]
-            [reagent.core :as r]))
+            [taoensso.encore :refer [map-keys]]
+            [vlad.core :as v]))
 
 
 (def auth-states
@@ -32,7 +34,7 @@
                                               [:challenge (terminal b64/toBuffer)]
                                               [:excludeCredentials ALL :id (terminal b64/toBuffer)])
                                   options)]
-    (clj->js {:publicKey options'})))
+    #js {:publicKey (clj->js options')}))
 
 
 (defn get-credential-options
@@ -40,7 +42,7 @@
   (let [options' (multi-transform (multi-path [:challenge (terminal b64/toBuffer)]
                                               [:allowCredentials ALL :id (terminal b64/toBuffer)])
                                   options)]
-    (clj->js {:publicKey options'})))
+    #js {:publicKey (clj->js options')}))
 
 
 (rf/reg-fx
@@ -136,6 +138,7 @@
 
 (rf/reg-event-fx
  ::submit-email
+ [(fork/on-submit ::login-form)]
  (fn [{:keys [db]} _]
    {:db (dissoc db ::authenticated?)
     :http-xhrio {:method :get
@@ -157,31 +160,102 @@
    (::authenticated? db)))
 
 
+;;
+;; Login form
+;;
+
+(def login-form-validation
+  (v/join
+   (v/attr ["email"] (v/present))))
+
+(defn flatten-keys [m]
+  (map-keys first m))
+
+(defn validate-login-form
+  [values]
+  (-> (v/validate login-form-validation values)
+      (v/guess-field-names)
+      (v/translate-errors v/english-translation)
+      (flatten-keys)))
+
+
+(defn highlight-class
+  [{:keys [touched errors]} fname]
+  (when (contains? touched fname)
+    (if (contains? errors fname)
+      "is-danger"
+      "is-success")))
+
+(defn help-tag
+  ([form fname]
+   (help-tag form fname nil))
+
+  ([{:keys [touched errors]} fname default]
+   (cond
+     (and (contains? touched fname) (contains? errors fname))
+     (into [:div] (for [error (get errors fname)]
+                    [:p.help.is-danger error]))
+
+     default
+     [:p.help default])))
+
+
+(defn email-input
+  [{:keys [values handle-change handle-blur disabled?] :as form}]
+  (let [fname "email"]
+    [:div.field
+     [:label.label "Email"]
+     [:div.control
+      [:input.input {:name fname
+                     :type "text"
+                     :class [(highlight-class form fname)]
+                     :disabled (get disabled? fname false)
+                     :placeholder "alice@example.com"
+                     :value (get values fname)
+                     :on-change handle-change
+                     :on-blur handle-blur}]]
+     (help-tag form fname "Enter a registered email address.")]))
+
+(defn remember-checkbox
+  [{:keys [values handle-change handle-blur disabled?]}]
+  (let [fname "register"]
+    [:label.checkbox
+     [:input {:type "checkbox"
+              :name fname
+              :checked (get values fname false)
+              :disabled (get disabled? fname false)
+              :on-change handle-change
+              :on-blur handle-blur}]
+     " Remember this browser"]))
+
+(defn submit-button
+  [{:keys [submitting?]}]
+  [:div.level
+   [:div.level-left]
+   [:div.level-right
+    [:div.level-item
+     [:button.button {:type "submit"
+                      :disabled submitting?}
+      "Next"]]]])
+
+(defn login-form
+  [{:keys [form-id handle-submit] :as form}]
+  [:form {:id form-id, :on-submit handle-submit}
+   (email-input form)
+   (remember-checkbox form)
+   (submit-button form)])
+
+
 (defn login-view []
-  (r/with-let [email (rf/subscribe [::email])
-               authenticated? (rf/subscribe [::authenticated?])]
-    [:div.container
-     [:div.columns
-      [:div.column]
-      [:div.column
-       [:div.field
-        [:label.label "Email"]
-        [:div.control
-         [:input.input {:type "text"
-                        :placeholder "alice@example.com"
-                        :class [(case @authenticated?, true "is-success", false "is-danger", nil)]
-                        :value @email
-                        :on-change #(rf/dispatch [::set-email (-> % .-target .-value)])}]]
-        [:p.help {:class [(case @authenticated?, true "is-success", false "is-danger", nil)]}
-         (case @authenticated?
-           true "Authentication successful."
-           false "Authentication failed."
-           "Enter a registered email address.")]]
-       [:div.level
-        [:div.level-left]
-        [:div.level-right
-         [:div.level-item
-          [:button.button {:disabled (empty? @email)
-                           :on-click #(rf/dispatch [::submit-email])}
-           "Next"]]]]]
-      [:div.column]]]))
+  [:div.container
+   [:div.columns
+    [:div.column]
+    [:div.column
+     [fork/form {:path ::login-form
+                 :form-id "login-form"
+                 :validation validate-login-form
+                 :prevent-default? true
+                 :clean-on-unmount? true
+                 :on-submit #(rf/dispatch [::submit-email %])}
+      login-form]]
+    [:div.column]]])

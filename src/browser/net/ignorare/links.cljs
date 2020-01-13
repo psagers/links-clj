@@ -14,8 +14,16 @@
 ;;   (dataset/get js/document.body "csrfToken"))
 
 
+(defn view []
+  (r/with-let [auth-required? (rf/subscribe [::conn/auth-required?])]
+    [:div
+     [conn/status-view]
+     (when @auth-required?
+       [auth/login-view])]))
+
+
 (defn ^:dev/after-load install-view []
-  (r/render [conn/status-view] (js/document.getElementById "links")))
+  (r/render [view] (js/document.getElementById "links")))
   ;; (r/render [auth/login-view] (js/document.getElementById "links")))
 
 

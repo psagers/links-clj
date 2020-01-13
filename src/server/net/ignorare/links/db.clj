@@ -106,7 +106,7 @@
         transactor-chan (transactor node tx-chan)]
     (with-meta
       {:node node, :tx-chan tx-chan, :transactor-chan transactor-chan}
-      {`to-db #(-> % :node crux/db)})))
+      {`to-db #(crux/db (:node %))})))
 
 
 ;; Stop accepting transactions and give the transactor a second to terminate.
@@ -138,7 +138,7 @@
   processed the new transaction.
 
   Returns a promise-chan that will convey the result of crux.api/submit-tx, if
-  any. If tx-fn throws an exception, it will be ignored and no transaction will
+  any. If tx-fn throws an exception, it will be logged and no transaction will
   be submitted."
   [{:keys [node tx-chan]} tx-fn & {:keys [sync?]}]
   (let [result-chan (async/promise-chan)]
@@ -155,4 +155,4 @@
 (s/fdef transact!
   :args (s/cat :crux ::crux
                :tx-fn ::tx-fn
-               :optional (s/keys* :opt [::sync?])))
+               :optional (s/keys* :opt-un [::sync?])))
